@@ -1,275 +1,326 @@
-library(tidyverse)
-setwd("C:/Users/lenovo/Desktop/Dossiers/Projets de Recherche/Mpox/Seq Mpox Projet rim/")
-# 1. Charger le fichier TSV exporté depuis Nextclade
-file_path <- "Mpox2025.tsv"
-df <- read_tsv(file_path, show_col_types = FALSE)
 
-# Déterminer le nom de la colonne contenant les substitutions
-mut_col <- if ("substitutions" %in% colnames(df)) "substitutions" else "mutations"
+# 1. Charger les packages ------------------------------------------------------
 
-# 2. Fonction d'analyse de la signature APOBEC3 sur une chaîne de mutations
-analyze_apobec3 <- function(sub_string) {
-  if (is.na(sub_string) || nchar(trimws(sub_string)) == 0) {
-    return(tibble(
-      total_mutations = 0,
-      apobec3_mutations = 0,
-      other_mutations = 0,
-      pct_apobec3 = 0.0
-    ))
+packages <- c("tidyverse", "lubridate", "patchwork", "viridis")
+
+for (pkg in packages) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    install.packages(pkg)
   }
-  
-  # Séparation des mutations (ex: "C1234T,G5678A,A9101G")
-  mut_list <- str_split(sub_string, ",")[[1]] %>% str_trim()
-  mut_list <- mut_list[nchar(mut_list) >= 3]
-  
-  total <- length(mut_list)
-  if (total == 0) {
-    return(tibble(
-      total_mutations = 0,
-      apobec3_mutations = 0,
-      other_mutations = 0,
-      pct_apobec3 = 0.0
-    ))
-  }
-  
-  # Extraction de la base initiale (première lettre) et mutée (dernière lettre)
-  ref_bases <- str_sub(mut_list, 1, 1) %>% toupper()
-  alt_bases <- str_sub(mut_list, -1, -1) %>% toupper()
-  
-  # Identification des mutations C->T et G->A
-  is_apobec3 <- (ref_bases == "C" & alt_bases == "T") | (ref_bases == "G" & alt_bases == "A")
-  
-  apobec3_count <- sum(is_apobec3)
-  other_count <- total - apobec3_count
-  pct_apobec3 <- round((apobec3_count / total) * 100, 2)
-  
-  return(tibble(
-    total_mutations = total,
-    apobec3_mutations = apobec3_count,
-    other_mutations = other_count,
-    pct_apobec3 = pct_apobec3
-  ))
 }
 
-# 3. Application du calcul sur l'ensemble des échantillons
-results <- df %>%
-  select(seqName, all_of(mut_col)) %>%
-  rename(sub_data = all_of(mut_col)) %>%
-  mutate(metrics = map(sub_data, analyze_apobec3)) %>%
-  unnest(metrics) %>%
-  select(-sub_data)
-
-# 4. Affichage d'un aperçu des résultats dans la console
-print(head(results, 15))
-
-# 5. Export des résultats au format CSV
-write_csv(results, "apobec3_summary_Mpox2025.csv")
-cat("\n[OK] Analyse terminée. Fichier 'apobec3_summary_Mpox2025.csv' généré avec succès.\n")
-
-
-
-
-##############APOBEC3 selon le temps##################"
 library(tidyverse)
 library(lubridate)
+library(patchwork)
+library(viridis)
 
-# 1. Load both CSV files
-results <- read_csv("apobec3_summary_Mpox2025.csv")
-meta <- read_csv2("Mpox_Date_2025.csv") # read_csv2 handles semicolon-separated values (;)
+# 2. Définir le répertoire de travail -----------------------------------------
 
-# Clean potential leading/trailing whitespace in column headers
-colnames(meta) <- str_trim(colnames(meta))
-
-# 2. Merge metadata and parse collection dates (DD/MM/YYYY format)
-df_temporal <- results %>%
-  bind_cols(meta %>% select(Date, clade, Host, Villes)) %>%
-  mutate(
-    date = dmy(Date), # Automatically converts DD/MM/YYYY format
-    year_decimal = decimal_date(date)
-  ) %>%
-  filter(!is.na(date))
-
-# 3. Generate plot with a pure white background (Figure 3)
-fig3 <- ggplot(df_temporal, aes(x = date, y = apobec3_mutations)) +
-  geom_point(aes(color = pct_apobec3, size = total_mutations), alpha = 0.8) +
-  geom_smooth(method = "lm", color = "#D55E00", fill = "#D55E00", alpha = 0.2, se = TRUE) +
-  scale_color_viridis_c(option = "viridis", name = "APOBEC3 (%)") +
-  scale_x_date(date_breaks = "1 month", date_labels = "%b %Y") +
-  labs(
-    title = "Figure 3: Temporal Accumulation of APOBEC3-Mediated Mutations",
-    subtitle = "Linear increase in C->T / G->A mutations over time (Côte d'Ivoire, 2025)",
-    x = "Collection Date",
-    y = "Number of APOBEC3 Mutations (C->T & G->A)",
-    size = "Total Mutations"
-  ) +
-  theme_classic(base_size = 12) + # Clean classic theme (white background, no gray grid)
-  theme(
-    plot.background   = element_rect(fill = "white", color = NA),
-    panel.background  = element_rect(fill = "white", color = NA),
-    legend.background = element_rect(fill = "white", color = NA),
-    legend.key        = element_rect(fill = "white", color = NA),
-    plot.title        = element_text(face = "bold", size = 13),
-    axis.text.x       = element_text(angle = 45, hjust = 1),
-    legend.position   = "right",
-    axis.line         = element_line(color = "black")
-  )
-
-# 4. Display and export image with explicit white background
-print(fig3)
-ggsave("Temporal_Accumulation.png", fig3, width = 9, height = 6, dpi = 300, bg = "white")
-
-
-################Par Ville#######################
-
-
-# ==============================================================================
-# R PIPELINE: Temporal and Geographic Analysis of APOBEC3 Mutations (Mpox 2025)
-# Publication-ready layout: Clean white background & English labels
-# ==============================================================================
-
-# ------------------------------------------------------------------------------
-# 1. Load Required Libraries
-# ------------------------------------------------------------------------------
-if (!require("pacman")) install.packages("pacman")
-pacman::p_load(
-  tidyverse, # Data manipulation (dplyr, readr) and plotting (ggplot2)
-  lubridate, # Date handling
-  patchwork, # Plot combination
-  ggpubr     # Statistical annotations
+setwd(
+  "C:/Users/lenovo/Desktop/Dossiers/Projets de Recherche/Mpox/Seq Mpox Projet rim/"
 )
 
-# ------------------------------------------------------------------------------
-# 2. Import and Clean Data
-# ------------------------------------------------------------------------------
-cat("\n[1/5] Importing CSV files...\n")
+# 3. Importer les fichiers CSV ------------------------------------------------
 
-# Load APOBEC3 summary results (comma-separated)
-results <- read_csv("apobec3_summary_Mpox2025.csv", show_col_types = FALSE)
+results <- read_csv(
+  "apobec3_summary_Mpox2025.csv",
+  show_col_types = FALSE
+)
 
-# Load metadata (semicolon-separated)
-meta <- read_csv2("Mpox_Date_2025.csv", show_col_types = FALSE)
+meta <- read_csv2(
+  "Mpox_Date_2025.csv",
+  show_col_types = FALSE
+)
 
-# Clean column headers
-colnames(meta) <- str_trim(colnames(meta))
+# Nettoyer les noms de colonnes
+names(results) <- str_trim(names(results))
+names(meta) <- str_trim(names(meta))
 
-# Merge datasets and format dates/locations
-df_data <- results %>%
-  bind_cols(meta %>% select(Date, clade, Host, Villes)) %>%
+# Vérifier la correspondance des lignes
+if (nrow(results) != nrow(meta)) {
+  stop(
+    "Erreur : les deux fichiers n'ont pas le même nombre de lignes. ",
+    "Vérifiez la correspondance des séquences avant de continuer."
+  )
+}
+
+# Vérifier la présence des colonnes requises
+required_results <- c(
+  "apobec3_mutations",
+  "pct_apobec3",
+  "total_mutations"
+)
+
+required_meta <- c("Date", "clade", "Host", "Villes")
+
+if (!all(required_results %in% names(results))) {
+  stop(
+    "Colonnes manquantes dans le fichier APOBEC3 : ",
+    paste(setdiff(required_results, names(results)), collapse = ", ")
+  )
+}
+
+if (!all(required_meta %in% names(meta))) {
+  stop(
+    "Colonnes manquantes dans le fichier de métadonnées : ",
+    paste(setdiff(required_meta, names(meta)), collapse = ", ")
+  )
+}
+
+# 4. Fusionner et nettoyer les données ----------------------------------------
+
+df_data <- bind_cols(
+  results,
+  meta %>% select(Date, clade, Host, Villes)
+) %>%
   mutate(
-    # Clean string spaces
-    Villes = str_trim(Villes),
-    clade  = str_trim(clade),
-    
-    # Parse collection dates (DD/MM/YYYY format)
-    date = dmy(Date),
-    year_decimal = decimal_date(date),
-    days_since_start = as.numeric(date - min(date, na.rm = TRUE))
+    date = dmy(str_trim(as.character(Date))),
+    Villes = str_trim(as.character(Villes)),
+    clade = str_trim(as.character(clade)),
+    apobec3_mutations = as.numeric(apobec3_mutations),
+    pct_apobec3 = as.numeric(pct_apobec3),
+    total_mutations = as.numeric(total_mutations)
   ) %>%
-  filter(!is.na(date))
-
-# Standardize regional groupings (e.g. Abidjan District)
-df_data <- df_data %>%
+  filter(
+    !is.na(date),
+    !is.na(apobec3_mutations),
+    !is.na(pct_apobec3),
+    !is.na(total_mutations),
+    !is.na(Villes),
+    Villes != ""
+  ) %>%
   mutate(
-    District_Region = case_when(
-      str_detect(Villes, "(?i)Abidjan|Abobo|PORT BOUET") ~ "Abidjan District",
+    Site = case_when(
+      str_detect(
+        Villes,
+        regex("Abidjan|Abobo|Port[- ]Bouet", ignore_case = TRUE)
+      ) ~ "Abidjan District",
       TRUE ~ Villes
     )
   )
 
-cat("-> Number of analyzed sequences:", nrow(df_data), "\n")
+if (nrow(df_data) < 3 || n_distinct(df_data$date) < 2) {
+  stop("Données insuffisantes pour réaliser la régression temporelle.")
+}
 
-# ------------------------------------------------------------------------------
-# 3. Statistical Analysis: Linear Regression
-# ------------------------------------------------------------------------------
-cat("\n[2/5] Calculating temporal linear regression...\n")
+cat("Nombre de séquences analysées :", nrow(df_data), "\n")
 
-lm_model <- lm(apobec3_mutations ~ days_since_start, data = df_data)
-lm_summary <- summary(lm_model)
+# 5. Calculer la régression linéaire ------------------------------------------
 
-r2_val <- lm_summary$r.squared
-p_val  <- lm_summary$coefficients[2, 4]
-slope  <- lm_summary$coefficients[2, 1]
+modele <- lm(
+  apobec3_mutations ~ as.numeric(date),
+  data = df_data
+)
 
-cat(sprintf("   - R²: %.4f\n", r2_val))
-cat(sprintf("   - p-value: %.4e\n", p_val))
-cat(sprintf("   - Accumulation rate: %.4f APOBEC3 mutations / day\n", slope))
+resume_modele <- summary(modele)
 
-# ------------------------------------------------------------------------------
-# 4. Generate Figures (Pure White Background / English Labels)
-# ------------------------------------------------------------------------------
-cat("\n[3/5] Generating graphical representations...\n")
+r2 <- resume_modele$r.squared
+p_value <- coef(resume_modele)[2, 4]
+pente_jour <- unname(coef(modele)[2])
 
-# --- PANEL A: Temporal Accumulation by Sampling Location ---
-p_temporal <- ggplot(df_data, aes(x = date, y = apobec3_mutations)) +
-  geom_smooth(method = "lm", color = "#222222", fill = "gray85", alpha = 0.4, se = TRUE, linetype = "dashed") +
-  geom_point(aes(color = District_Region, size = total_mutations), alpha = 0.85) +
-  scale_size_continuous(range = c(3, 7), name = "Total Mutations") +
-  scale_color_brewer(palette = "Set1", name = "Sampling Location") +
-  scale_x_date(date_breaks = "1 month", date_labels = "%b %Y") +
-  labs(
-    title = "A. Temporal accumulation of APOBEC3-mediated mutations",
-    subtitle = sprintf("R² = %.2f | p = %.4f | Rate = +%.3f mut/day", r2_val, p_val, slope),
-    x = "Collection Date",
-    y = "Number of APOBEC3 Mutations (C->T / G->A)"
-  ) +
-  theme_classic(base_size = 12) +
+subtitle_text <- sprintf(
+  "Linear regression: R² = %.3f | p = %.4g | slope = %.3f mutations/day",
+  r2,
+  p_value,
+  pente_jour
+)
+
+cat("R² :", round(r2, 3), "\n")
+cat("p-value :", signif(p_value, 4), "\n")
+cat(
+  "Pente :", round(pente_jour, 3),
+  "mutations par jour\n"
+)
+
+# 6. Paramètres communs aux deux panneaux -------------------------------------
+
+theme_commun <- theme_classic(base_size = 11) +
   theme(
-    plot.background   = element_rect(fill = "white", color = NA),
-    panel.background  = element_rect(fill = "white", color = NA),
-    legend.background = element_rect(fill = "white", color = NA),
-    legend.key        = element_rect(fill = "white", color = NA),
-    plot.title        = element_text(face = "bold", size = 13),
-    axis.text.x       = element_text(angle = 45, hjust = 1),
-    legend.position   = "right",
-    axis.line         = element_line(color = "black")
-  )
-
-# --- PANEL B: Percentage of APOBEC3 Mutations by Sampling Site ---
-p_box <- ggplot(df_data, aes(x = reorder(Villes, pct_apobec3, FUN = median), y = pct_apobec3)) +
-  geom_boxplot(outlier.shape = NA, alpha = 0.2, fill = "#0072B2", color = "black") +
-  geom_jitter(aes(color = clade), width = 0.15, size = 3, alpha = 0.8) +
-  coord_flip() +
-  scale_color_viridis_d(option = "plasma", name = "Clade") +
-  labs(
-    title = "B. Proportion of APOBEC3 activity (% C->T / G->A) by collection site",
-    x = "Sampling Location / City",
-    y = "APOBEC3 Mutations (%)"
-  ) +
-  theme_classic(base_size = 12) +
-  theme(
-    plot.background   = element_rect(fill = "white", color = NA),
-    panel.background  = element_rect(fill = "white", color = NA),
-    legend.background = element_rect(fill = "white", color = NA),
-    legend.key        = element_rect(fill = "white", color = NA),
-    plot.title        = element_text(face = "bold", size = 13),
-    axis.line         = element_line(color = "black")
-  )
-
-# ------------------------------------------------------------------------------
-# 5. Combine and Export Figures
-# ------------------------------------------------------------------------------
-cat("\n[4/5] Assembling final figure...\n")
-
-final_figure <- p_temporal / p_box + 
-  plot_annotation(
-    title = "Genomic Surveillance of Mpox in Côte d'Ivoire (2025)",
-    subtitle = "Spatiotemporal analysis of APOBEC3 mutational signature and viral evolution",
-    caption = "Source: Institut Pasteur de Côte d'Ivoire (IPCI)",
-    theme = theme(
-      plot.background = element_rect(fill = "white", color = NA),
-      plot.title      = element_text(face = "bold", size = 16),
-      plot.subtitle   = element_text(size = 12, color = "gray30")
+    plot.title = element_text(
+      face = "bold",
+      size = 12
+    ),
+    plot.subtitle = element_text(size = 8, color = "grey30"),
+    axis.text.x = element_text(
+      angle = 45,
+      hjust = 1,
+      color = "black"
+    ),
+    axis.text.y = element_text(color = "black"),
+    axis.title.y = element_blank(), # SUPPRIMER le titre de l'axe Y
+    legend.position = "right",
+    legend.title = element_text(size = 10, face = "bold"),
+    legend.text = element_text(size = 9),
+    plot.background = element_rect(
+      fill = "white",
+      color = NA
+    ),
+    panel.background = element_rect(
+      fill = "white",
+      color = NA
     )
   )
 
-# Save High-Resolution Figures with explicit white background
-ggsave("Figure_Mpox_APOBEC3_Temporal_Geo_2025.png", final_figure, width = 11, height = 10, dpi = 300, bg = "white")
-ggsave("Figure_Mpox_APOBEC3_Temporal_Geo_2025.pdf", final_figure, width = 11, height = 10, bg = "white")
+# 7. PANEL A : évolution temporelle selon la ville ----------------------------
 
-cat("\n[5/5] Exporting merged dataset...\n")
-write_csv(df_data, "Mpox_2025_APOBEC3_Merged_Analysis.csv")
+p_location <- ggplot(
+  df_data,
+  aes(
+    x = date,
+    y = apobec3_mutations
+  )
+) +
+  geom_smooth(
+    method = "lm",
+    formula = y ~ x,
+    color = "#D55E00",
+    fill = "#D55E00",
+    alpha = 0.20,
+    se = TRUE
+  ) +
+  geom_point(
+    aes(
+      color = Site,
+      size = total_mutations
+    ),
+    alpha = 0.85
+  ) +
+  scale_color_brewer(
+    palette = "Set1",
+    name = "Sampling location"
+  ) +
+  scale_size_continuous(
+    range = c(2, 7),
+    name = "Total mutations"
+  ) +
+  scale_x_date(
+    date_breaks = "1 month",
+    date_labels = "%b %Y",
+    expand = expansion(mult = c(0.05, 0.05))
+  ) +
+  labs(
+    title = "A. Temporal trend by sampling location",
+    subtitle = subtitle_text,
+    x = "Collection date",
+    y = NULL
+  ) +
+  theme_commun
 
-cat("\nPipeline finished successfully! Output files:\n")
-cat(" - Figure_Mpox_APOBEC3_Temporal_Geo_2025.png\n")
-cat(" - Figure_Mpox_APOBEC3_Temporal_Geo_2025.pdf\n")
-cat(" - Mpox_2025_APOBEC3_Merged_Analysis.csv\n\n")
+# 8. PANEL B : évolution temporelle selon le pourcentage APOBEC3 --------------
+
+p_percentage <- ggplot(
+  df_data,
+  aes(
+    x = date,
+    y = apobec3_mutations
+  )
+) +
+  geom_smooth(
+    method = "lm",
+    formula = y ~ x,
+    color = "#D55E00",
+    fill = "#D55E00",
+    alpha = 0.20,
+    se = TRUE
+  ) +
+  geom_point(
+    aes(
+      color = pct_apobec3,
+      size = total_mutations
+    ),
+    alpha = 0.85
+  ) +
+  scale_color_viridis_c(
+    option = "viridis",
+    name = "APOBEC3 (%)"
+  ) +
+  scale_size_continuous(
+    range = c(2, 7),
+    name = "Total mutations"
+  ) +
+  scale_x_date(
+    date_breaks = "1 month",
+    date_labels = "%b %Y",
+    expand = expansion(mult = c(0.05, 0.05))
+  ) +
+  labs(
+    title = "B. Temporal trend by APOBEC3 percentage",
+    subtitle = subtitle_text,
+    x = "Collection date",
+    y = NULL
+  ) +
+  theme_commun
+
+# 9. Combiner les panneaux et regrouper les légendes --------------------------
+
+figure_final <- (p_location | p_percentage) +
+  plot_layout(
+    guides = "collect",
+    widths = c(1, 1)
+  ) +
+  plot_annotation(
+    title = paste(
+      "Temporal accumulation of APOBEC3-associated mutations",
+      "in MPXV, Côte d'Ivoire, 2025"
+    ),
+    caption = paste(
+      "Panel A: point colour indicates sampling location.",
+      "Panel B: point colour indicates APOBEC3 percentage.",
+      "Point size indicates total mutations."
+    ),
+    theme = theme(
+      plot.title = element_text(
+        face = "bold",
+        size = 15
+      ),
+      plot.caption = element_text(size = 9, color = "grey40"),
+      plot.background = element_rect(
+        fill = "white",
+        color = NA
+      )
+    )
+  ) &
+  theme(
+    legend.position = "right",
+    legend.box = "vertical",
+    legend.box.just = "left"
+  )
+
+# 10. Afficher la figure ------------------------------------------------------
+
+print(figure_final)
+
+# 11. Exporter la figure en PNG et PDF ----------------------------------------
+
+ggsave(
+  filename = "Figure_Mpox_APOBEC3_Temporal_Final_2025.png",
+  plot = figure_final,
+  width = 16,
+  height = 7.5,
+  units = "in",
+  dpi = 300,
+  bg = "white"
+)
+
+ggsave(
+  filename = "Figure_Mpox_APOBEC3_Temporal_Final_2025.pdf",
+  plot = figure_final,
+  width = 16,
+  height = 7.5,
+  units = "in",
+  bg = "white"
+)
+
+# 12. Exporter les données analysées ------------------------------------------
+
+write_csv(
+  df_data,
+  "Mpox_2025_APOBEC3_Temporal_Analysis.csv"
+)
+
+cat("\nAnalyse terminée avec succès.\n")
+cat("Fichiers générés :\n")
+cat("- Figure_Mpox_APOBEC3_Temporal_Final_2025.png\n")
+cat("- Figure_Mpox_APOBEC3_Temporal_Final_2025.pdf\n")
+cat("- Mpox_2025_APOBEC3_Temporal_Analysis.csv\n")
+
